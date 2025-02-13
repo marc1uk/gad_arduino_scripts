@@ -13,6 +13,9 @@
 // I2C functions for controlling the Grove 4-channel relay
 #include <multi_channel_relay.h>
 
+// for rollover detection
+#include <limits.h>
+
 // IMPORTANT:
 // LED_BUILTIN is digital pin 13.
 #define LED_BUILTIN 13
@@ -41,7 +44,8 @@
 //#define LAMP_DB15_ENABLE_PIN xxx
 
 // for controlling the FOS-2-INL inline shutters
-#define GAD_ARM_SHUTTER_PIN 7
+// swapped pin 7 <-> 12 with flow sensor as 7 can be attached to interrupts
+#define GAD_ARM_SHUTTER_PIN 12
 #define REF_ARM_SHUTTER_PIN 4
 
 // we control the LED on/off states via an I2C controlled set of relays
@@ -61,11 +65,16 @@
 // D10 on silkscreen = A10
 #define SOL2_TEMP_PIN 10
 
-// the flow sensor is a digital IN, 5V when flow, 0V when none
-#define FLOW_SENSE_PIN 12
+// flow sensor is a digital signal alternating 5V/0V with a frequency of 1rpm(?)
+// we use interrupts to record edges without impacting program flow
+// the micro only handles interrupts on pins D0,D1,D2,D3,D7 aka RX,TX,SDA,SCL,D7
+#define FLOW_SENSE_PIN 7
 
 // we have an audible buzzer that needs a PWM to sound
 #define BUZZER_PIN 5
+
+// retro-fit leak sensors
+#define LEAK_SENSE_PIN 18
 
 // ===========================
 
@@ -102,6 +111,12 @@ int VALVE_DUTY_CYCLE = 100.*(double(VALVE_HOLDING_VOLTAGE)/double(VALVE_PSU_VOLT
 // we also need variables to keep track of when each valve was enabled to known when to switch to holding.
 unsigned long tube_valves_opened = 0;
 unsigned long parallel_valves_opened = 0;
+unsigned long tube_open_overflow_ticks = 0;
+unsigned long parallel_open_overflow_ticks = 0;
+
+// tick counts for flow sensor
+volatile unsigned long flow_edges=0;
+volatile unsigned long flow_edges_last_s=0;
 
 // for the buzzer, the applied voltage doesn't appear to be important,
 // affecting neither tone nor volume, but an AnalogWrite value of 200 works well.
@@ -120,6 +135,29 @@ void Blink(int ontime=LONG_DELAY, int nblinks=1){
 		delay(ontime);
 		digitalWrite(LED_BUILTIN, LOW);
 	}
+	return;
+}
+
+void PrintHelp(){
+	Serial.println("Commands:");
+	Serial.println("Dark [0|1]: Dark 1 turns all LEDs off");
+	Serial.println("White [0|1]: Turn White LED on or off");
+	Serial.println("275_A [0|1]: Turn 275nm LED on or off");
+	Serial.println("Deuterium [0|1]: Turn D2 lamp UV on or off");
+	Serial.println("Tungsten [0|1]: Turn D2 lamp VIS on or off");
+	Serial.println("RelayN [0|1]: Set relay  N on or off");
+	Serial.println("Lamp_DB15 [0|1]: Enable or disable control remote control of D2 lamp");
+	Serial.println("GAD_ARM [0|1]: Open or close shutter to GAD tube arm");
+	Serial.println("REF_ARM [1|0]: Open or close shutter to ref arm");
+	Serial.println("Shutter_lamp [1|0]: Open or close internal shutter of D2 lamp");
+	Serial.println("Valve_gad [1|0]: Open or close solenoid valves for GAD flow");
+	Serial.println("Valve_parallel [1|0]: Open or close solenoid valves for parallel flow");
+	Serial.println("Valve_pump [0|1]: Enable or disable pump");
+	Serial.println("LED_temp: Query PCB LED temperature sensor");
+	Serial.println("Sol_temps: Query valve thermistor temperature sensors");
+	Serial.println("Flow_check: Query flow rate");
+	Serial.println("BEEP: dobeep");
+	Serial.println("QUIT: Quit application");
 	return;
 }
 
@@ -217,6 +255,18 @@ void setup() {
 	pinMode(SOL1_TEMP_PIN, INPUT);
 	pinMode(SOL2_TEMP_PIN, INPUT);
 	
+	// add flow sensor pin
+	pinMode(FLOW_SENSE_PIN, INPUT);
+	// flow rate measurement is done with two interrupts
+	// 1. increment an edge counter each time we see a rising edge on the flow sensor
+	attachInterrupt(digitalPinToInterrupt(FLOW_SENSE_PIN), FlowSenseEdge, RISING); // CHANGE for both edges
+	// 2. determine the rate based on the number of edges seen in the last second, oncen each second
+	InitTimer1Interrupt();
+	flow_edges=0;
+	
+	// add leak sensor pin
+	pinMode(LEAK_SENSE_PIN, INPUT);
+	
 	// arduino micro provides 10-bit ADC resolution (1024) over a default range 0-5V.
 	// this range can be reduced with the analogReference command to increase resolution;
 	// see https://www.arduino.cc/reference/en/language/functions/analog-io/analogreference/
@@ -235,9 +285,8 @@ void setup() {
 	for(int i=0; i<3; ++i){
 		analogRead(SOL0_TEMP_PIN+i);
 	}
-	
-	// and flow sensor pin
-	pinMode(FLOW_SENSE_PIN, INPUT);
+	// we also use analog read on leak sensor so do that too
+	analogRead(LEAK_SENSE_PIN);
 	
 	// initialise all outputs to low... is this best?
 	digitalWrite(LED_BUILTIN, LOW);
@@ -327,7 +376,7 @@ double GetLEDTemp(){
 }
 
 double GetSolTemp(int PIN){
-	// the thermistors use an LM334 current source with 47Ohm set resistor
+	// the thermistors use an LM334 current source with 47 Ohm set resistor
 	// to provide 1.4mA of current. Over the range 10-70C with this set current
 	// the thermistors have a voltage that fits well to V = 0.0121*Tc + 1.132
 	static const double V0 = 1.132;  // V
@@ -484,6 +533,11 @@ void loop() {
 			
 			// type 3: misc (no value)
 			// =======================
+			else if(key=="HELP"){
+				type=3;
+				Serial.println("calling help function");
+				PrintHelp();
+			}
 			else if(key=="HELLO"){
 				type=3;
 				Serial.println("Hello!");
@@ -533,11 +587,20 @@ void loop() {
 				double temp = GetSolTemp(pin);
 				Serial.println(key+String{": "}+temp);
 			}
+			else if(key=="LEAK_CHECK"){
+				type=3;
+				// leak sensor is technically analog, it's a resistor
+				// when fully dry it's 5V, the wetter it gets the lower that goes
+				int state = analogRead(LEAK_SENSE_PIN);
+				Serial.println(key+String{": "}+state);
+			}
 			else if(key=="FLOW_SENSE"){
 				type=3;
-				// flow sensor is boolean only - either flow or none (not a flow rate)
-				int state = digitalRead(FLOW_SENSE_PIN);
-				Serial.println(key+String{": "}+state);
+				// flow sensor. Interrupts store num edges seen in last second.
+				// convert to a rate: input goes high each time a flow wheel arm
+				// passes the internal hall sensor - i.e. 6 times per rotation
+				float rps = float(flow_edges_last_s)/6.;
+				Serial.println(key+String{": "}+rps);
 			}
 			else if(key=="OFF"){
 				type=3;
@@ -579,7 +642,7 @@ void loop() {
 			String val("");
 			if(type!=3){
 				
-				// this key shoud have a following value - parse it
+				// this key should have a following value - parse it
 				if(command.length()){
 					pos = command.indexOf(' ');
 					if(verbosity) Serial.println(String("val pos ")+pos);
@@ -638,14 +701,25 @@ void loop() {
 		
 	} // if serial data available
 	
+	// millis() rolls over every ~50 days.
+	// handle millis rollover
+	if(millis() < tube_valves_opened){
+		tube_open_overflow_ticks = ULONG_MAX - tube_valves_opened;
+		tube_valves_opened = 0;
+	}
+	if(millis() < parallel_valves_opened){
+		parallel_open_overflow_ticks = ULONG_MAX - parallel_valves_opened;
+		parallel_valves_opened = 0;
+	}
+	
 	// reduce valve voltages to holding if required
-	if((tube_valves_opened>0) && ((millis()-tube_valves_opened)>VALVE_HOLDING_DELAY)){
-		if(verbosity) Serial.println(String("tube valves open for ")+(millis()-tube_valves_opened)+" ms...");
+	if((tube_valves_opened>0) && ((millis()-tube_valves_opened + tube_open_overflow_ticks)>VALVE_HOLDING_DELAY)){
+		if(verbosity) Serial.println(String("tube valves open for ")+(millis()-tube_valves_opened + tube_open_overflow_ticks)+" ms...");
 		reduce_valve_to_holding(TUBE_FLOW_VALVES_PIN);
 		tube_valves_opened = 0;
 	}
-	if((parallel_valves_opened>0) && ((millis()-parallel_valves_opened)>VALVE_HOLDING_DELAY)){
-		if(verbosity) Serial.println(String("parallel valves open for ")+(millis()-parallel_valves_opened)+" ms...");
+	if((parallel_valves_opened>0) && ((millis()-parallel_valves_opened + parallel_open_overflow_ticks)>VALVE_HOLDING_DELAY)){
+		if(verbosity) Serial.println(String("parallel valves open for ")+(millis()-parallel_valves_opened + parallel_open_overflow_ticks)+" ms...");
 		reduce_valve_to_holding(PARALLEL_FLOW_VALVE_PIN);
 		parallel_valves_opened = 0;
 	}
@@ -657,3 +731,38 @@ void loop() {
 	
 	return;
 }
+
+// ISR called on change from the flow sensor
+void FlowSenseEdge(){
+	++flow_edges;
+	return;
+}
+
+// ISR called when Timer1 overflows - more or less once a second
+ISR(TIMER1_OVF_vect) {
+	flow_edges_last_s = flow_edges;
+	flow_edges=0;
+	return;
+}
+
+void InitTimer1Interrupt(){
+	// next time, maybe just use the interrupts library?
+	// this garbage configures Timer1 with a prescale of 256
+	// (so down scales the 16MHz system clock to 62.5kHz)
+	// and enables an interrupt every time the 16-bit counter
+	// rolls over (i.e 65536 ticks).
+	// At 62,500 ticks/sec, this is about every 1.04 seconds.
+	// we could do better, but this is good enough.
+	cli();
+	TCCR1A = 0; 
+	TCCR1B = 0;
+	TCCR1B |=  (1 << CS12);
+	TCCR1B &= ~(1 << CS11);
+	TCCR1B &= ~(1 << CS10);
+	TIMSK1 |= (1<<TOIE1);
+	TIFR1 = TOV1;
+	TCNT1 = 0;
+	sei();
+}
+
+

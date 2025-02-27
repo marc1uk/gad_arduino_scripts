@@ -100,13 +100,15 @@ bool grove_connected = false;
 // then after some delay reduced to a 'holding' level to prevent
 // over-heating, which results in the valves getting stuck open.
 // power supply voltage
-int VALVE_PSU_VOLTS = 24; // [V]
+float VALVE_PSU_VOLTS = 24; // [V]
 // how long to keep at full voltage before dropping to holding voltage
-int VALVE_HOLDING_DELAY = 3000; // [ms] TODO add code to change this at runtime.
+float VALVE_HOLDING_DELAY = 3000; // [ms] TODO add code to change this at runtime.
 // holding voltage.
-int VALVE_HOLDING_VOLTAGE = 5;  // [V]. TODO add code to change this at runtime.
+float VALVE_HOLDING_VOLTAGE = 1;  // [V]. TODO add code to change this at runtime.
 // N.B. 5V may seem low but works and at 8V the solenoids get kinda hot
-int VALVE_DUTY_CYCLE = 100.*(double(VALVE_HOLDING_VOLTAGE)/double(VALVE_PSU_VOLTS));
+float VALVE_DUTY_CYCLE = 100.*(VALVE_HOLDING_VOLTAGE/VALVE_PSU_VOLTS);
+// analogWrite takes a value of 0-255, representing duty cycle 0-100%
+int VALVE_HOLDING_COUNTS = 1; //PWM_MAX*(VALVE_DUTY_CYCLE/100.);
 
 // we also need variables to keep track of when each valve was enabled to known when to switch to holding.
 unsigned long tube_valves_opened = 0;
@@ -140,7 +142,7 @@ void Blink(int ontime=LONG_DELAY, int nblinks=1){
 
 void PrintHelp(){
 	Serial.println("Commands:");
-	Serial.println("Dark [0|1]: Dark 1 turns all LEDs off");
+	/* FIXME are these accurate fot hsi script or for the parent binary?! */
 	Serial.println("White [0|1]: Turn White LED on or off");
 	Serial.println("275_A [0|1]: Turn 275nm LED on or off");
 	Serial.println("Deuterium [0|1]: Turn D2 lamp UV on or off");
@@ -155,7 +157,8 @@ void PrintHelp(){
 	Serial.println("Valve_pump [0|1]: Enable or disable pump");
 	Serial.println("LED_temp: Query PCB LED temperature sensor");
 	Serial.println("Sol_temps: Query valve thermistor temperature sensors");
-	Serial.println("Flow_check: Query flow rate");
+	Serial.println("Flow_sense: Query flow rate");
+	Serial.println("DARK: Turns all LEDs off");
 	Serial.println("BEEP: dobeep");
 	Serial.println("QUIT: Quit application");
 	return;
@@ -410,21 +413,19 @@ void switch_VALVE(int PIN, bool on){
 
 void reduce_valve_to_holding(int PIN){
 	String valve = (PIN==PARALLEL_FLOW_VALVE_PIN) ? "Parallel" : "Tube";
-	if(verbosity) Serial.println("reducing "+valve+" voltage to holding duty cycle of "+VALVE_DUTY_CYCLE+"%");
-	// convert to DAC counts
-	int analogVal = (VALVE_DUTY_CYCLE/100.f) * PWM_MAX;
+	/*if(verbosity)*/ Serial.println("reducing "+valve+" voltage to "+VALVE_HOLDING_COUNTS+" (duty cycle of "+VALVE_DUTY_CYCLE+")");
 	// write
-	analogWrite(PIN, analogVal);
+	analogWrite(PIN, VALVE_HOLDING_COUNTS);
 	return;
 }
 
 int SetValveHoldingVoltage(double newVoltage){
 	VALVE_HOLDING_VOLTAGE = newVoltage;  // [V]
-	VALVE_DUTY_CYCLE = 100.*(double(VALVE_HOLDING_VOLTAGE)/double(VALVE_PSU_VOLTS));
-	
-	// coerce duty cycle to valid range
+	VALVE_DUTY_CYCLE = 100.*(VALVE_HOLDING_VOLTAGE/VALVE_PSU_VOLTS);
+	//ensure duty cycle is within valid range
 	if(VALVE_DUTY_CYCLE>100) VALVE_DUTY_CYCLE = 100;
 	if(VALVE_DUTY_CYCLE<0) VALVE_DUTY_CYCLE = 0;
+	VALVE_HOLDING_COUNTS = PWM_MAX*(VALVE_DUTY_CYCLE/100.);
 	
 	return VALVE_DUTY_CYCLE;
 }
@@ -600,9 +601,9 @@ void loop() {
 				// convert to a rate: input goes high each time a flow wheel arm
 				// passes the internal hall sensor - i.e. 6 times per rotation
 				float rps = float(flow_edges_last_s)/6.;
-				Serial.println(key+String{": "}+rps);
+				Serial.println(key+String{": "}+String(rps));
 			}
-			else if(key=="OFF"){
+			else if(key=="DARK"){
 				type=3;
 				Serial.println("Disabling all lights");
 				switch_all_LEDs_off();

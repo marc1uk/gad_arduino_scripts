@@ -48,29 +48,35 @@ bool ArduinoControl::Execute(bool& quit){
 	std::string key, tmp;
 	ss >> key >> tmp;
 	
-	std::cout<<"key: '"<<key<<"', val: '"<<tmp<<"'"<<std::endl;
+	//std::cout<<"key: '"<<key<<"', val: '"<<tmp<<"'"<<std::endl;
 	
+	bool found_key=false;
 	if(key=="Dark"){
 		// turn off all lights
 		std::string resp;
 		get_ok = SendAndReceive("OFF",resp);
 		get_ok = get_ok & resp=="Disabling all lights";
+		found_key=true;
 	}
 	
 	else if(key=="White"){
 		get_ok = get_ok && SetState("WHITE", (tmp=="1"));
+		found_key=true;
 	}
-		
+	
 	if(key=="275_A"){
 		get_ok = get_ok && SetState("LED275", (tmp=="1"));
+		found_key=true;
 	}
 	
 	if(key=="Deuterium"){
 		get_ok = get_ok && SetState("DEUTERIUM", (tmp=="1"));
+		found_key=true;
 	}
 	
 	if(key=="Tungsten"){
 		get_ok = get_ok && SetState("TUNGSTEN", (tmp=="1"));
+		found_key=true;
 	}
 	
 	// generic Grove relay control
@@ -79,61 +85,90 @@ bool ArduinoControl::Execute(bool& quit){
 		if(key==check){
 			if(i<4) get_ok = get_ok && SetState(key, (tmp=="1"));
 			else Log(m_unique_name+" Relay4 received; relays are numbered 0-3",v_error, verbosity);
+			found_key=true;
 		}
 	}
 	
 	if(key=="Shutter_gad"){
 		get_ok = get_ok && SetState("GAD_ARM", (tmp=="1"));
+		found_key=true;
 	}
 	
 	if(key=="Shutter_ref"){
 		get_ok = get_ok && SetState("REF_ARM", (tmp=="1"));
+		found_key=true;
 	}
 	
 	if(key=="Shutter_lamp"){
 		get_ok = get_ok && SetState("LAMP_SHUTTER", (tmp=="1"));
+		found_key=true;
 	}
 	
 	// this just enables/disables control via the DB15 connector on the back of the lamp
 	// note not all electronics boxes support this; some have it hard-wired to 5V
 	if(key=="Lamp_DB15"){
 		get_ok = get_ok && SetState("LAMP_DB15", (tmp=="1"));
+		found_key=true;
 	}
 	
 	if(key=="Valve_gad"){
 		get_ok = get_ok && SetState("TUBE", (tmp=="1"));
+		found_key=true;
 	}
 	
 	if(key=="Valve_parallel"){
 		get_ok = get_ok && SetState("PARALLEL", (tmp=="1"));
+		found_key=true;
 	}
 	
 	if(key=="Valve_pump"){
 		get_ok = get_ok && SetState("PUMP", (tmp=="1"));
+		found_key=true;
 	}
 	
 	if(key=="LED_temp"){
 		get_ok = get_ok && GetLedTemp();
+		found_key=true;
 	}
 	
 	if(key=="Sol_temps"){
 		get_ok = get_ok && GetSolTemps();
+		found_key=true;
 	}
 	
-	if(key=="Flow_check"){
+	if(key=="Flow_sense"){
 		get_ok = get_ok && GetFlowStatus();
+		found_key=true;
 	}
+	
+	if(key=="Leak_check"){
+		get_ok = get_ok && GetLeakStatus();
+		found_key=true;
+	}
+	
+	/*
+	// commands used by the arduino are different to the commands used by this
+	// TODO align them
+	if(key=="HELP"){
+		std::string response;
+		get_ok = SendAndReceive("HELP",response);
+		std::cout<<response<<std::endl;
+	}
+	*/
 	
 	if(key=="BEEP"){
 		// TODO add support for beep patterns
 		get_ok = get_ok && SerialWrite("BEEP");
+		found_key=true;
 	}
 	
 	if(key=="QUIT"){
 		quit=true;
+		found_key=true;
 	}
 	
-	std::cout<<(get_ok ? "OK" : "ERR")<<std::endl;
+	if(!found_key){ std::cerr<<"Unrecognised key: '"<<key<<"'"<<std::endl; }
+	else std::cout<<(get_ok ? "OK" : "ERR")<<std::endl;
 	return get_ok;
 }
 
@@ -283,20 +318,45 @@ bool ArduinoControl::GetFlowStatus(){
 		return false;
 	}
 	// format is 'FLOW_SENSE: X' (so we know we're getting the right number)
-	// X is either 0 or 1, currently used flow sensor does not provide an actual rate
+	// X is a flow rate in revolutions/sec
 	std::stringstream ss(resp);
 	std::string tmp;
-	char flow_state=0;
-	ss >> tmp >> flow_state;
+	float flow_val;
+	ss >> tmp >> flow_val;
 	ok = (!ss.fail() && (ss>>std::ws).eof());
 	bool good_header = (tmp=="FLOW_SENSE:");
-	bool good_flow_state = (flow_state=='1' || flow_state=='0');
-	if(!ok || !good_header || !good_flow_state){
+	if(!ok || !good_header){
 		Log(m_unique_name+"::GetFlowStatus error '"+resp+"'",v_error,verbosity);
 		return false;
 	}
-	int flow_val = std::atoi(&flow_state);
 	std::cout<<"Flow_Status: "<<flow_val<<std::endl;
+	return true;
+}
+
+bool ArduinoControl::GetLeakStatus(){
+	std::string resp;
+	bool ok = SendAndReceive("LEAK_CHECK",resp);
+	if(!ok){
+		Log(m_unique_name+"::GetLeakStatus error '"+resp+"'",v_error,verbosity);
+		return false;
+	}
+	// format is a voltage. 1023 is totally dry, generally any appreciable amount
+	// of water on any one sensor drops it to <450, and it bottoms out around 330
+	// even if all sensors are soaked. So a threshold of 700 should be a
+	// pretty definitive test of water
+	std::stringstream ss(resp);
+	std::string tmp;
+	float leak_val=0;
+	ss >> tmp >> leak_val;
+	ok = (!ss.fail() && (ss>>std::ws).eof());
+	bool good_header = (tmp=="LEAK_CHECK:");
+	if(!ok || !good_header){
+		Log(m_unique_name+"::GetLeakStatus error '"+resp+"'",v_error,verbosity);
+		return false;
+	}
+	Log(m_unique_name+"::GetLeakStatus sensor value: "+std::to_string(leak_val),v_debug,verbosity);
+	std::string status_msg = (leak_val<700) ? "WARNING: GOT WATER!" : "OK: no water";
+	std::cout<<"Leak_Status: "<<status_msg<<std::endl;
 	return true;
 }
 
@@ -376,6 +436,7 @@ bool ArduinoControl::SendAndReceive(std::string msg, std::string& response, int 
 		Log(m_unique_name+" Error: command '"+msg+"' returned '"+response+"'",v_error,verbosity);
 		return false;
 	}
+	Log(m_unique_name+" Response: '"+response+"'",v_debug,verbosity);
 	
 	return true;
 }

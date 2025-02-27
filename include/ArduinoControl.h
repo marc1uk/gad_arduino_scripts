@@ -49,6 +49,7 @@ class ArduinoControl {
 	bool GetSolTemp(int sol, double& temp);
 	bool GetSolTemps();
 	bool GetFlowStatus();
+	bool GetLeakStatus();
 	
 	private:
 	timer atimer;

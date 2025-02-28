@@ -19,17 +19,15 @@ PORT!=arduino-cli board list | grep micro | cut -d' ' -f 1
 ToolDAQPath=/home/gad/GDConcMeasure/ToolDAQ
 SerialCppLib = -L $(ToolDAQPath)/SerialCpp -lserial
 SerialCppInclude = -I $(ToolDAQPath)/SerialCpp
+ToolFrameworkInc = -I $(ToolDAQPath)/ToolFrameworkCore/include
+ToolFrameworkLib = -L $(ToolDAQPath)/ToolFrameworkCore/lib -lLogging
 
 sketch: gad_micro.ino
 	arduino-cli compile ./gad_micro.ino -b arduino:avr:micro --export-binaries --library $(LIBDIRS) -p $(PORT)
 	# --output-dir ./bin --build-path ./bin --build-cache-path ./bin
 
-ArduinoControl.o: src/ArduinoControl.cpp include/ArduinoControl.h
-	g++ -x c++ -g -std=c++11 -fPIC -c $< -o $@ -I ./include $(SerialCppInclude)
-	#g++ -x c++ -g -std=c++11 -fPIC -c $< -o $@ -I ./include $(SerialCppInclude)
-
-control: src/main.cpp ArduinoControl.o
-	g++ -g -std=c++11 $^ -o $@ -I ./include $(SerialCppInclude) $(SerialCppLib)
+control: src/main.cpp src/Arduino.cpp
+	g++ -g -std=c++11 $^ -o $@ -I ./include $(SerialCppInclude) $(ToolFrameworkInc) $(SerialCppLib) $(ToolFrameworkLib)
 
 upload: build/arduino.avr.micro/gad_micro.ino.with_bootloader.bin
 	arduino-cli upload ./gad_micro.ino -b arduino:avr:micro -p $(PORT)

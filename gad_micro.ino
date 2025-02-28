@@ -144,13 +144,13 @@ void PrintHelp(){
 	Serial.println("Commands:");
 	/* FIXME are these accurate fot hsi script or for the parent binary?! */
 	Serial.println("White [0|1]: Turn White LED on or off");
-	Serial.println("275_A [0|1]: Turn 275nm LED on or off");
+	Serial.println("LED275 [0|1]: Turn 275nm LED on or off");
 	Serial.println("Deuterium [0|1]: Turn D2 lamp UV on or off");
 	Serial.println("Tungsten [0|1]: Turn D2 lamp VIS on or off");
 	Serial.println("RelayN [0|1]: Set relay  N on or off");
-	Serial.println("Lamp_DB15 [0|1]: Enable or disable control remote control of D2 lamp");
-	Serial.println("GAD_ARM [0|1]: Open or close shutter to GAD tube arm");
-	Serial.println("REF_ARM [1|0]: Open or close shutter to ref arm");
+	//Serial.println("Lamp_DB15 [0|1]: Enable or disable control remote control of D2 lamp");
+	Serial.println("GAD_arm [0|1]: Open or close shutter to GAD tube arm");
+	Serial.println("Ref_arm [1|0]: Open or close shutter to ref arm");
 	Serial.println("Shutter_lamp [1|0]: Open or close internal shutter of D2 lamp");
 	Serial.println("Valve_gad [1|0]: Open or close solenoid valves for GAD flow");
 	Serial.println("Valve_parallel [1|0]: Open or close solenoid valves for parallel flow");
@@ -158,7 +158,9 @@ void PrintHelp(){
 	Serial.println("LED_temp: Query PCB LED temperature sensor");
 	Serial.println("Sol_temps: Query valve thermistor temperature sensors");
 	Serial.println("Flow_sense: Query flow rate");
+	Serial.println("Leak_check: Query leak sensor");
 	Serial.println("DARK: Turns all LEDs off");
+	Serial.println("OFF: Turn everything off (all relays, shutters, valves)");
 	Serial.println("BEEP: dobeep");
 	Serial.println("QUIT: Quit application");
 	return;
@@ -607,6 +609,19 @@ void loop() {
 				type=3;
 				Serial.println("Disabling all lights");
 				switch_all_LEDs_off();
+			}
+			else if(key=="OFF"){
+				type=3;
+				Serial.println("Turning everything off");
+				switch_all_LEDs_off();
+				digitalWrite(LAMP_VIS_CONTROL_PIN,0);
+				digitalWrite(LAMP_UV_CONTROL_PIN,0);
+				digitalWrite(LAMP_SHUTTER_CONTROL_PIN,0);
+				//digitalWrite(LAMP_DB15_ENABLE_PIN,0);
+				digitalWrite(GAD_ARM_SHUTTER_PIN,0);
+				digitalWrite(REF_ARM_SHUTTER_PIN,0);
+				digitalWrite(TUBE_FLOW_VALVES_PIN, 0);
+				digitalWrite(PARALLEL_FLOW_VALVE_PIN, 0);
 			}
 			else if(key=="QUIT"){
 				type=3;

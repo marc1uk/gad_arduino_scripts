@@ -415,7 +415,7 @@ void switch_VALVE(int PIN, bool on){
 
 void reduce_valve_to_holding(int PIN){
 	String valve = (PIN==PARALLEL_FLOW_VALVE_PIN) ? "Parallel" : "Tube";
-	/*if(verbosity)*/ Serial.println("reducing "+valve+" voltage to "+VALVE_HOLDING_COUNTS+" (duty cycle of "+VALVE_DUTY_CYCLE+")");
+	if(verbosity) Serial.println("reducing "+valve+" voltage to "+VALVE_HOLDING_COUNTS+" (duty cycle of "+VALVE_DUTY_CYCLE+")");
 	// write
 	analogWrite(PIN, VALVE_HOLDING_COUNTS);
 	return;
@@ -441,6 +441,7 @@ void loop() {
 		// read the command
 		//String command = Serial.readString(); // reads until timeout
 		String command = Serial.readStringUntil('\n'); // reads until terminator, or timeout
+		command.toUpperCase(); // modifies string in-place
 		
 		// loop over pairs of key and value
 		int pos = 0;
@@ -457,9 +458,6 @@ void loop() {
 			else command="";
 			
 			if(verbosity) Serial.println("GOT KEY '"+key+"', command is now '"+command+"'");
-			
-			// make uppercase
-			key.toUpperCase(); // modifies string in-place
 			
 			// sort into two types of value syntax:
 			// 'ON/OFF' or 'OPEN/CLOSED'

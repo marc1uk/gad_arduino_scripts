@@ -67,8 +67,8 @@ int main(int argc, const char* argv[]){
 		for(char& c : val) c=std::tolower(c);
 		
 		// similarly be relaxed about value syntax
-		if(val=="1" || val=="on" || val=="true") val="ENABLE";
-		if(val=="0" || val=="off" || val=="false") val="DISABLE";
+		if(val=="1" || val=="on" || val=="true") val="enable";
+		if(val=="0" || val=="off" || val=="false") val="disable";
 		
 		if(key=="quit") break;
 		

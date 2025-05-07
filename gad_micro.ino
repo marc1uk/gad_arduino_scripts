@@ -33,7 +33,8 @@
 
 // for controlling the Deuterium/Tungsten lamp
 // D18 = A0 on silkscreen
-#define LAMP_UV_CONTROL_PIN 18
+#define LAMP_UV_CONTROL_PIN 18   // UNUSED clashes with leak sense
+#define LEAK_SENSE_PIN 18
 // D20 = A2 on silkscreen
 #define LAMP_VIS_CONTROL_PIN 20
 // D22 = A4 on silkscreen
@@ -72,9 +73,6 @@
 
 // we have an audible buzzer that needs a PWM to sound
 #define BUZZER_PIN 5
-
-// retro-fit leak sensors
-#define LEAK_SENSE_PIN 18
 
 // ===========================
 
